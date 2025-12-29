@@ -6,22 +6,18 @@ import { Subject, ClassLevel, AnswerMode, ProjectType, QuizQuestion } from "../t
 // 1. Get the raw string from env
 const RAW_KEYS = process.env.API_KEY || "";
 
-// 2. Advanced Parsing:
-// - Split by comma, semicolon, newline, or pipe
-// - Remove any quotes (" or ') that might have been pasted
-// - Trim whitespace
-// - Filter out empty or too short strings
+// 2. Ultra-Safe Parsing
 const API_KEYS = RAW_KEYS
-  .replace(/['"]/g, '') // Remove quotes
-  .split(/[,;\n|]+/)    // Split by delimiters
-  .map(k => k.trim())   // Remove spaces
-  .filter(k => k.length > 10); // Check for valid key length
+  .replace(/API_KEY=/gi, '') // Remove accidentally pasted variable name
+  .replace(/['"]/g, '')      // Remove quotes
+  .split(/[,;\n|\s]+/)       // Split by comma, semicolon, newline, pipe OR SPACE
+  .map(k => k.trim())        // Trim whitespace
+  .filter(k => k.length > 20 && !k.startsWith("AIzaSy_PLACEHOLDER")); // Basic validation
 
-// Log (safely) to console for debugging
-console.log(`[Gemini Service] Loaded ${API_KEYS.length} API Keys.`);
+// Log (masked) to console for debugging - Check your browser console!
+console.log(`[Gemini Service] Loaded ${API_KEYS.length} keys:`, API_KEYS.map(k => k.substring(0, 8) + '...'));
 
 // Create a pool of clients
-// If no keys found, we create a dummy one. The API will throw an error, but the app won't crash on load.
 const clientPool = API_KEYS.length > 0 
   ? API_KEYS.map(key => new GoogleGenAI({ apiKey: key }))
   : [new GoogleGenAI({ apiKey: "MISSING_KEY" })];
@@ -46,21 +42,19 @@ const getCurrentSession = () => {
 };
 
 // --- MODEL STRATEGY ---
-// We prioritize the new Flash 3 model, but fallback to 1.5 Flash (Standard) if 3 is not enabled for the key.
+// 1. 'gemini-1.5-flash': MOST STABLE, Standard Tier. Use this first to avoid "Invalid Key".
+// 2. 'gemini-2.0-flash': Faster, smarter, but experimental (might fail in some regions).
 const MODEL_FALLBACKS = [
-  'gemini-2.0-flash',        // Newest fast model
-  'gemini-1.5-flash',        // Most stable standard model
-  'gemini-1.5-flash-latest'  // Backup alias
+  'gemini-1.5-flash',       
+  'gemini-1.5-flash-latest', 
+  'gemini-2.0-flash'        
 ];
 
 /**
  * EXTREME RETRY LOGIC
- * Dynamic retries based on key count. 
- * If you have 5 keys, we try at least 6 times to ensure we rotate through them if some are busy.
  */
 async function generateWithRetry<T>(
   operation: (client: GoogleGenAI, model: string) => Promise<T>, 
-  // Dynamic default: At least 3, or KeyCount + 1 to ensure rotation coverage
   retries = Math.max(3, API_KEYS.length + 1), 
   baseDelay = 1000
 ): Promise<T> {
@@ -82,27 +76,26 @@ async function generateWithRetry<T>(
         // Classification
         const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('quota') || msg.includes('exhausted') || msg.includes('busy');
         const isModelError = status === 404 || status === 400 || msg.includes('not found') || msg.includes('supported');
-        const isAuthError = status === 401 || status === 403 || msg.includes('key') || msg.includes('api key');
+        const isAuthError = status === 401 || status === 403 || msg.includes('key') || msg.includes('api key') || msg.includes('permission');
 
         if (isModelError) {
-          // Model doesn't exist? Try the next older model with the SAME key
+          // Model issue? Try next model on same key
           continue; 
         }
 
         if (isRateLimit || isAuthError) {
-          // Key is busy or invalid? Break inner loop to try a NEW KEY
-          console.warn(`Key issue (${isRateLimit ? 'Busy' : 'Invalid'}). Switching keys...`);
+          // Key issue? Break inner loop to switch keys
+          console.warn(`Key failed (${isRateLimit ? 'Busy' : 'Auth/Invalid'}). Switching...`);
           break; 
         }
 
-        // Unknown error? Throw immediately
         throw error;
       }
     }
 
-    // If we are here, the key failed. Wait before trying next key.
+    // Wait before switching keys if we haven't exhausted attempts
     if (attempt < retries) {
-       const delay = baseDelay * Math.pow(1.5, attempt); // Exponential backoff
+       const delay = baseDelay * Math.pow(1.5, attempt); 
        await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -128,12 +121,6 @@ Formatting rules:
 - Use bullet points where possible.
 - Highlight important keywords (using capitalization, not bolding).
 - For long answers, end with a brief conclusion.
-
-Subject-specific rules:
-- Maths: Show all steps clearly in board-exam format.
-- Physics/Chemistry: Use formulas, definitions, and examples.
-- Biology: Explain processes simply; mention diagrams in words if needed.
-- History/Civics/Geography/Economics: Use short paragraphs, factual, textbook tone.
 `;
 
 export const getStudyAnswer = async (
@@ -142,9 +129,8 @@ export const getStudyAnswer = async (
   classLevel: ClassLevel,
   mode: AnswerMode
 ): Promise<string> => {
-  // Guard clause for missing keys
   if (API_KEYS.length === 0) {
-      return "⚠️ Configuration Error: No API Keys found. Please set API_KEY in your environment variables.";
+      return "⚠️ Configuration Error: No API Keys found. Please check your .env file.";
   }
 
   try {
@@ -174,7 +160,7 @@ export const getStudyAnswer = async (
         return "⚠️ High Traffic: All AI keys are currently busy. Please wait 10 seconds.";
     }
     if (msg.includes("key") || msg.includes("403") || msg.includes("401")) {
-        return "⚠️ Configuration Error: The API Key is invalid. Check your .env file format (no quotes, comma separated).";
+        return "⚠️ Key Error: The API Key is invalid or expired. Check console for details.";
     }
     return `⚠️ System Error: ${msg.substring(0, 100)}`;
   }

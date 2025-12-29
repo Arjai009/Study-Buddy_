@@ -6,9 +6,12 @@
     <title>Study Buddy - CBSE AI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Polyfill to prevent "process is not defined" error in browsers on Netlify
-      // This ensures the app loads even if the API Key isn't injected yet.
-      window.process = { env: { API_KEY: "" } };
+      // SAFE POLYFILL: Only set if undefined. This prevents overwriting actual env vars injected by Vite/Webpack.
+      window.process = window.process || {};
+      window.process.env = window.process.env || {};
+      if (!window.process.env.API_KEY) {
+        window.process.env.API_KEY = ""; 
+      }
     </script>
     <script>
       tailwind.config = {
@@ -113,7 +116,6 @@
 </head>
   <body class="text-gray-900 dark:text-gray-100 transition-colors duration-200 fixed inset-0 overflow-hidden flex justify-center items-center">
     <div id="root" class="h-full w-full flex justify-center items-center"></div>
-    <!-- THIS WAS MISSING: The entry point for your React app -->
     <script type="module" src="./index.tsx"></script>
   </body>
 </html>
