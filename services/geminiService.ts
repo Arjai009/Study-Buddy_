@@ -55,11 +55,14 @@ const MODEL_FALLBACKS = [
 
 /**
  * EXTREME RETRY LOGIC
+ * Dynamic retries based on key count. 
+ * If you have 5 keys, we try at least 6 times to ensure we rotate through them if some are busy.
  */
 async function generateWithRetry<T>(
   operation: (client: GoogleGenAI, model: string) => Promise<T>, 
-  retries = 3, 
-  baseDelay = 2000
+  // Dynamic default: At least 3, or KeyCount + 1 to ensure rotation coverage
+  retries = Math.max(3, API_KEYS.length + 1), 
+  baseDelay = 1000
 ): Promise<T> {
   let lastError: any;
 
@@ -77,13 +80,12 @@ async function generateWithRetry<T>(
         const status = error.status || error.response?.status;
 
         // Classification
-        const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('quota') || msg.includes('exhausted');
+        const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('quota') || msg.includes('exhausted') || msg.includes('busy');
         const isModelError = status === 404 || status === 400 || msg.includes('not found') || msg.includes('supported');
         const isAuthError = status === 401 || status === 403 || msg.includes('key') || msg.includes('api key');
 
         if (isModelError) {
           // Model doesn't exist? Try the next older model with the SAME key
-          // console.warn(`Model ${model} not found. Trying next...`);
           continue; 
         }
 
@@ -109,12 +111,29 @@ async function generateWithRetry<T>(
 }
 
 const SYSTEM_INSTRUCTION_BASE = `
-You are an expert school teacher for CBSE Classes 9, 10, 11, and 12.
-Rules:
-1. Follow NCERT syllabus strictly.
-2. Simple, clear language.
-3. No Markdown bolding (**text**).
-4. Be concise.
+You are an expert school teacher for CBSE Class 9 and Class 10, strictly following the NCERT syllabus.
+
+Rules you MUST follow:
+1. Answer ONLY according to Class 9 and Class 10 NCERT syllabus.
+2. Use simple, clear language suitable for school students.
+3. Do NOT use college-level or advanced terminology.
+4. Be exam-oriented and board-focused.
+5. If the question is outside Class 9 or 10 syllabus, clearly say:
+   "This topic is beyond the Class 9/10 NCERT syllabus."
+6. NO Markdown bolding (**text**) in output. Keep it plain text for cleanliness.
+
+Formatting rules:
+- Start with a short definition (if applicable).
+- Explain step-by-step.
+- Use bullet points where possible.
+- Highlight important keywords (using capitalization, not bolding).
+- For long answers, end with a brief conclusion.
+
+Subject-specific rules:
+- Maths: Show all steps clearly in board-exam format.
+- Physics/Chemistry: Use formulas, definitions, and examples.
+- Biology: Explain processes simply; mention diagrams in words if needed.
+- History/Civics/Geography/Economics: Use short paragraphs, factual, textbook tone.
 `;
 
 export const getStudyAnswer = async (
