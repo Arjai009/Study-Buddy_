@@ -76,10 +76,11 @@ const getCurrentSession = () => {
   }
 };
 
+// PRIORITIZE FASTER MODELS
 const MODEL_FALLBACKS = [
-  'gemini-1.5-flash',       
-  'gemini-1.5-flash-latest', 
-  'gemini-2.0-flash'        
+  'gemini-1.5-flash-8b', // Fastest
+  'gemini-1.5-flash',    // Balanced   
+  'gemini-2.0-flash'     // Experimental but fast
 ];
 
 /**
@@ -106,7 +107,7 @@ async function generateWithRetry<T>(
         const status = error.status || error.response?.status;
 
         // Classification
-        const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('quota') || msg.includes('exhausted') || msg.includes('busy');
+        const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('quota') || msg.includes('exhausted') || msg.includes('busy') || msg.includes('overloaded');
         const isModelError = status === 404 || status === 400 || msg.includes('not found') || msg.includes('supported');
         const isAuthError = status === 401 || status === 403 || msg.includes('key') || msg.includes('api key') || msg.includes('permission');
 
@@ -117,7 +118,7 @@ async function generateWithRetry<T>(
 
         if (isRateLimit || isAuthError) {
           // Key issue? Break inner loop to switch keys
-          console.warn(`Key failed (${isRateLimit ? 'Busy' : 'Auth/Invalid'}). Switching...`);
+          console.warn(`[Gemini] Key/Model failed (${isRateLimit ? 'Busy' : 'Auth/Invalid'}). Switching...`);
           break; 
         }
 
@@ -133,8 +134,8 @@ async function generateWithRetry<T>(
   }
   
   // Final Fallback: Prevent crash if all keys fail
-  console.error("All AI keys exhausted or busy.");
-  throw new Error("All AI keys are currently busy or invalid.");
+  console.error("All AI keys exhausted or busy.", lastError);
+  throw new Error(`High Traffic: Unable to connect to AI services. Details: ${lastError?.message}`);
 }
 
 const SYSTEM_INSTRUCTION_BASE = `

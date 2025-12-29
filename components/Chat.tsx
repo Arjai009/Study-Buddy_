@@ -622,7 +622,7 @@ export default function Chat({ user }: ChatProps) {
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar relative">
               <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cross-stripes.png')] opacity-[0.04] dark:opacity-[0.05] pointer-events-none fixed"></div>
               
-              <div className="space-y-2 pb-20">
+              <div className="space-y-2 pb-40">
                   {getCurrentMessages()
                     .filter(msg => !msg.replyTo) // Filter out replies from main view
                     .map((msg) => {
@@ -634,10 +634,10 @@ export default function Chat({ user }: ChatProps) {
               </div>
           </div>
 
-          {/* Main Input (No Emoji Picker here per requirement) */}
-          <div className="absolute bottom-5 left-4 right-4 z-30">
+          {/* Main Input - Raised to Avoid Nav Bar */}
+          <div className="absolute bottom-24 left-4 right-4 z-30">
               <div className="max-w-3xl mx-auto relative">
-                <div className="flex gap-2 items-end bg-white dark:bg-gray-900 p-1.5 rounded-[2rem] shadow-2xl border border-gray-100 dark:border-gray-800">
+                <div className="flex gap-2 items-end bg-white/90 dark:bg-gray-900/90 backdrop-blur-md p-1.5 rounded-[2rem] shadow-2xl border border-gray-100 dark:border-gray-800">
                     <input 
                         ref={inputRef}
                         className="flex-1 bg-transparent outline-none text-base dark:text-white py-3 pl-5 max-h-32 placeholder-gray-400 font-medium" 

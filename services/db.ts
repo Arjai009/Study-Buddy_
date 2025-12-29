@@ -3,14 +3,17 @@ import { SUPABASE_URL, SUPABASE_KEY } from '../constants';
 import { UserSettings, ChatMessage, ChatRequest, PrivateChat, ChatGroup, DirectoryUser, ClassLevel } from '../types';
 
 // Detect if we are in "Offline/Mock" mode
-// We check if the keys are placeholders or empty.
+// We check if the keys are placeholders, empty, OR if they match the default demo project which might be paused/broken.
+const DEFAULT_DEMO_URL = "isyotjzilabszeytdhbh"; 
+
 const isMockMode = !SUPABASE_URL || 
                    !SUPABASE_KEY || 
                    SUPABASE_URL.includes("placeholder") || 
-                   SUPABASE_KEY.includes("placeholder");
+                   SUPABASE_KEY.includes("placeholder") ||
+                   SUPABASE_URL.includes(DEFAULT_DEMO_URL); // Force local storage if using the default shared key
 
 if (isMockMode) {
-  console.log("[DB] ⚠️ Supabase keys missing. Switching to LOCAL STORAGE Mock Mode.");
+  console.log("[DB] ⚠️ Using Local Storage Mode (Offline/Demo). Chat will be saved locally.");
 }
 
 // Initialize Supabase only if keys look valid-ish to avoid immediate throw
