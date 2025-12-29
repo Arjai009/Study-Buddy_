@@ -6,12 +6,21 @@
     <title>Study Buddy - CBSE AI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // SAFE POLYFILL: Only set if undefined. This prevents overwriting actual env vars injected by Vite/Webpack.
+      // --- KEY CONFIGURATION ---
+      // If .env is not working, you can paste your key inside the quotes below:
+      const MANUAL_KEY = "AIzaSyCS9B5j02Txn26poBnIL-MPLjd2sPTWDr4,AIzaSyABMTo2OZVul5QUK9J7hG_Mc4-Au8Bcgog,AIzaSyBGvO4C1j7kFBs99PTIfgWutZ_MkW-1Hro,AIzaSyA-n0wpWHA8qgrIJfqHmrt_5PHqkf_JHEY,AIzaSyDlPrNzOtTAA1yWaIR6Y4gNiAK1l62wYoU"; 
+
+      // Safe Polyfill for process.env
       window.process = window.process || {};
       window.process.env = window.process.env || {};
-      if (!window.process.env.API_KEY) {
-        window.process.env.API_KEY = ""; 
-      }
+      
+      // Consolidate keys from various sources
+      window.process.env.API_KEY = 
+        MANUAL_KEY || 
+        window.process.env.API_KEY || 
+        window.process.env.GEMINI_API_KEY || 
+        window.process.env.REACT_APP_API_KEY ||
+        "";
     </script>
     <script>
       tailwind.config = {

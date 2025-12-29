@@ -3,19 +3,38 @@ import { Subject, ClassLevel, AnswerMode, ProjectType, QuizQuestion } from "../t
 
 // --- ROBUST KEY MANAGEMENT ---
 
-// 1. Get the raw string from env
-const RAW_KEYS = process.env.API_KEY || "";
+// 1. Get the raw string from various possible env vars
+const RAW_KEYS = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.REACT_APP_API_KEY || "";
 
-// 2. Ultra-Safe Parsing
+// 2. "Silver Bullet" Parsing Strategy
+// Instead of trying to remove specific prefixes, we find the start of the key ("AIzaSy")
+// and extract from there. This handles "GEMINI_API_KEY=AIzaSy...", quotes, spaces, etc.
 const API_KEYS = RAW_KEYS
-  .replace(/API_KEY=/gi, '') // Remove accidentally pasted variable name
-  .replace(/['"]/g, '')      // Remove quotes
-  .split(/[,;\n|\s]+/)       // Split by comma, semicolon, newline, pipe OR SPACE
-  .map(k => k.trim())        // Trim whitespace
-  .filter(k => k.length > 20 && !k.startsWith("AIzaSy_PLACEHOLDER")); // Basic validation
+  .split(/[,;\n\s]+/) // Split by any separator
+  .map(candidate => {
+      // Clean quotes
+      const clean = candidate.replace(/['"]/g, '').trim();
+      
+      // Find where the actual key starts (Google keys always start with AIzaSy)
+      const startIndex = clean.indexOf('AIzaSy');
+      
+      // If found, extract from that point to the end
+      if (startIndex !== -1) {
+          return clean.substring(startIndex);
+      }
+      return null;
+  })
+  .filter(key => key !== null && key.length > 30) as string[];
 
-// Log (masked) to console for debugging - Check your browser console!
-console.log(`[Gemini Service] Loaded ${API_KEYS.length} keys:`, API_KEYS.map(k => k.substring(0, 8) + '...'));
+// Log status to console (masked)
+if (API_KEYS.length > 0) {
+  console.log(`[Gemini Service] ✅ Successfully loaded ${API_KEYS.length} valid keys.`);
+} else {
+  // Helpful debug info
+  console.error(`[Gemini Service] ❌ No valid keys found.`);
+  console.error(`Raw input length: ${RAW_KEYS.length}`);
+  console.error(`Tip: Ensure your keys start with 'AIzaSy'.`);
+}
 
 // Create a pool of clients
 const clientPool = API_KEYS.length > 0 
@@ -42,8 +61,8 @@ const getCurrentSession = () => {
 };
 
 // --- MODEL STRATEGY ---
-// 1. 'gemini-1.5-flash': MOST STABLE, Standard Tier. Use this first to avoid "Invalid Key".
-// 2. 'gemini-2.0-flash': Faster, smarter, but experimental (might fail in some regions).
+// 1. 'gemini-1.5-flash': MOST STABLE, Standard Tier. Use this first.
+// 2. 'gemini-2.0-flash': Faster, smarter, but experimental.
 const MODEL_FALLBACKS = [
   'gemini-1.5-flash',       
   'gemini-1.5-flash-latest', 
@@ -129,8 +148,9 @@ export const getStudyAnswer = async (
   classLevel: ClassLevel,
   mode: AnswerMode
 ): Promise<string> => {
+  // --- USER HELP MESSAGES ---
   if (API_KEYS.length === 0) {
-      return "⚠️ Configuration Error: No API Keys found. Please check your .env file.";
+      return "⚠️ Configuration Error: No valid API Keys found. Ensure you have pasted keys starting with 'AIzaSy'.";
   }
 
   try {
@@ -160,7 +180,7 @@ export const getStudyAnswer = async (
         return "⚠️ High Traffic: All AI keys are currently busy. Please wait 10 seconds.";
     }
     if (msg.includes("key") || msg.includes("403") || msg.includes("401")) {
-        return "⚠️ Key Error: The API Key is invalid or expired. Check console for details.";
+        return "⚠️ Key Error: The API Key is invalid or expired. Please check your settings.";
     }
     return `⚠️ System Error: ${msg.substring(0, 100)}`;
   }
