@@ -1,20 +1,18 @@
 import { GoogleGenAI } from "@google/genai";
 import { Subject, ClassLevel, AnswerMode, ProjectType, QuizQuestion } from "../types";
 
-// --- MULTI-KEY ARCHITECTURE ---
-// 1. Parse the comma-separated keys from the environment
+// --- ROBUST KEY MANAGEMENT ---
+// Parse keys from various delimiters (comma, space, newline, semicolon)
 const RAW_KEYS = process.env.API_KEY || "";
-const API_KEYS = RAW_KEYS.split(',').map(k => k.trim()).filter(k => k.length > 0);
+const API_KEYS = RAW_KEYS.split(/[,;\n\s]+/).map(k => k.trim()).filter(k => k.length > 5); // Basic length check
 
-// 2. Initialize a pool of clients
-// If no keys are found, create a dummy one to prevent crash (requests will fail gracefully)
+// Create a pool of clients
 const clientPool = API_KEYS.length > 0 
   ? API_KEYS.map(key => new GoogleGenAI({ apiKey: key }))
-  : [new GoogleGenAI({ apiKey: "" })];
+  : [new GoogleGenAI({ apiKey: "" })]; // Fallback to empty key to show auth error from API
 
 /**
- * Returns a random client from the pool.
- * With 5 keys, this distributes the load (~20% per key).
+ * Returns a random client to distribute load.
  */
 const getRandomClient = () => {
   const randomIndex = Math.floor(Math.random() * clientPool.length);
@@ -24,9 +22,7 @@ const getRandomClient = () => {
 const getCurrentSession = () => {
   const now = new Date();
   const year = now.getFullYear();
-  const month = now.getMonth(); // 0-11
-  
-  // Indian Academic Session Logic (starts April)
+  const month = now.getMonth(); 
   if (month >= 3) {
     return `${year}-${(year + 1).toString().slice(-2)}`;
   } else {
@@ -34,60 +30,85 @@ const getCurrentSession = () => {
   }
 };
 
+// --- MODEL STRATEGY ---
+// We try the best model first. If it fails (404/400), we try the next.
+// 'gemini-3-flash-preview' is preferred but might not be active for all keys yet.
+const MODEL_FALLBACKS = [
+  'gemini-3-flash-preview',
+  'gemini-2.0-flash-exp',
+  'gemini-flash-latest'
+];
+
 /**
- * ROBUST RETRY SYSTEM
- * If a key hits a Rate Limit (429) or Server Overload (503),
- * this function waits briefly and then retries using a *different* random client.
+ * EXTREME RETRY LOGIC
+ * 1. Rotates API Keys on 429/401 errors.
+ * 2. Rotates Models on 404/400 errors (if model not found).
+ * 3. Exponential backoff for rate limits.
  */
 async function generateWithRetry<T>(
-  operation: (client: GoogleGenAI) => Promise<T>, 
+  operation: (client: GoogleGenAI, model: string) => Promise<T>, 
   retries = 3, 
-  baseDelay = 1000
+  baseDelay = 2000
 ): Promise<T> {
-  try {
-    // 1. Pick a key for this attempt
+  let lastError: any;
+
+  // Try loop
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    // Pick a random client (key)
     const client = getRandomClient();
-    return await operation(client);
-  } catch (error: any) {
-    // 2. Detect Exhaustion/Busy errors
-    const isRateLimit = error.status === 429 || 
-                        error.status === 503 ||
-                        (error.message && error.message.includes('429')) ||
-                        (error.message && error.message.includes('exhausted')) ||
-                        (error.message && error.message.includes('overloaded'));
-    
-    // 3. Failover Logic
-    if (retries > 0 && isRateLimit) {
-      console.warn(`Key busy/exhausted. Switching keys... (${retries} retries left)`);
-      
-      // Wait a short delay before trying another key
-      await new Promise(resolve => setTimeout(resolve, baseDelay));
-      
-      // Recursive call: This naturally picks a new random client from the pool
-      return generateWithRetry(operation, retries - 1, baseDelay * 1.5);
+
+    // Try through models in order of preference
+    for (const model of MODEL_FALLBACKS) {
+      try {
+        return await operation(client, model);
+      } catch (error: any) {
+        lastError = error;
+        const msg = (error.message || "").toLowerCase();
+        const status = error.status || error.response?.status;
+
+        // ANALYSIS:
+        // 429, 503, "quota", "exhausted" -> Rate Limit -> Try different Key (break model loop, continue attempt loop)
+        // 404, "not found", "unsupported" -> Model Issue -> Try next Model (continue model loop)
+        // 401, 403, "key" -> Auth Issue -> Try different Key (break model loop, continue attempt loop)
+
+        const isRateLimit = status === 429 || status === 503 || msg.includes('429') || msg.includes('exhausted') || msg.includes('quota') || msg.includes('overloaded');
+        const isModelError = status === 404 || status === 400 || msg.includes('not found') || msg.includes('supported');
+        const isAuthError = status === 401 || status === 403 || msg.includes('key');
+
+        if (isModelError) {
+          console.warn(`Model ${model} failed. Trying fallback...`);
+          continue; // Try next model in list with SAME key
+        }
+
+        if (isRateLimit || isAuthError) {
+          console.warn(`Key failed (${isRateLimit ? 'Busy' : 'Auth'}). Switching key...`);
+          break; // Break model loop to pick NEW KEY in outer loop
+        }
+
+        // If unknown error, throw immediately
+        throw error;
+      }
     }
-    
-    // If not a rate limit, or out of retries, throw the error
-    throw error;
+
+    // If we are here, the current key failed all/some models due to Rate Limit/Auth.
+    // Wait before trying next key
+    if (attempt < retries) {
+       const delay = baseDelay * Math.pow(2, attempt);
+       console.log(`Waiting ${delay}ms before next attempt...`);
+       await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+
+  throw lastError;
 }
 
-// Optimized System Instruction for speed and cost efficiency
 const SYSTEM_INSTRUCTION_BASE = `
-You are an expert school teacher for CBSE Classes 9, 10, 11, and 12, strictly following the NCERT syllabus. 
-
-Rules you MUST follow:
-1. Answer ONLY according to the NCERT syllabus.
-2. For Class 9/10: Simple language, foundation focus.
-3. For Class 11/12: Precise terminology, board-exam focus.
-4. If outside syllabus: "This topic is beyond the Class [X] NCERT syllabus."
-5. NO Markdown bolding (**text**) in output. Keep it plain text.
-6. Be concise.
-
-Format:
-- Definition
-- Step-by-step explanation
-- Conclusion
+You are an expert school teacher for CBSE Classes 9, 10, 11, and 12.
+Rules:
+1. Follow NCERT syllabus strictly.
+2. Simple, clear language.
+3. No Markdown bolding (**text**).
+4. Be concise.
 `;
 
 export const getStudyAnswer = async (
@@ -97,18 +118,11 @@ export const getStudyAnswer = async (
   mode: AnswerMode
 ): Promise<string> => {
   try {
-    const prompt = `
-      Class: ${classLevel}
-      Subject: ${subject}
-      Mode: ${mode}
-      Question: ${question}
-      
-      Provide a clean, structured answer.
-    `;
+    const prompt = `Class: ${classLevel}, Subject: ${subject}, Mode: ${mode}\nQuestion: ${question}`;
 
-    const response = await generateWithRetry(async (client) => {
+    const response = await generateWithRetry(async (client, model) => {
       return await client.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: model,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION_BASE,
@@ -117,12 +131,22 @@ export const getStudyAnswer = async (
       });
     });
 
-    let text = response.text || "Sorry, I couldn't generate an answer.";
-    text = text.replace(/\*\*/g, ''); // Remove bolding
+    let text = response.text || "No response text generated.";
+    text = text.replace(/\*\*/g, '');
     return text;
-  } catch (error) {
-    console.error("AI Error:", error);
-    return "All AI systems are currently at maximum capacity. Please wait 1 minute and try again.";
+
+  } catch (error: any) {
+    console.error("Gemini Critical Failure:", error);
+    
+    // Friendly Error Messages
+    const msg = (error.message || "").toLowerCase();
+    if (msg.includes("429") || msg.includes("quota")) {
+        return "⚠️ High Traffic: All AI keys are currently busy. Please wait 30 seconds and try again.";
+    }
+    if (msg.includes("key") || msg.includes("403") || msg.includes("401")) {
+        return "⚠️ Configuration Error: Invalid API Key. Please check your settings.";
+    }
+    return `⚠️ System Error: ${msg.substring(0, 60)}...`;
   }
 };
 
@@ -133,14 +157,13 @@ export const getQuizQuestions = async (
 ): Promise<QuizQuestion[]> => {
   try {
     const prompt = `
-      Generate 5 MCQs. Class ${classLevel} ${subject}. ${topic ? 'Topic: ' + topic : ''}
-      Return ONLY a JSON array:
-      [{"question": "...", "options": ["A", "B", "C", "D"], "correctAnswer": "A", "explanation": "..."}]
+      Generate 5 MCQs for Class ${classLevel} ${subject} ${topic ? `on ${topic}` : ''}.
+      Return ONLY valid JSON array: [{"question":"", "options":["","","",""], "correctAnswer":"", "explanation":""}]
     `;
 
-    const response = await generateWithRetry(async (client) => {
+    const response = await generateWithRetry(async (client, model) => {
       return await client.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: model,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION_BASE,
@@ -168,19 +191,15 @@ export const getProjectContent = async (
 ): Promise<string> => {
   try {
     const session = getCurrentSession();
-    const prompt = `
-      Create Project Content.
-      Class: ${classLevel}, Subject: ${subject}, Type: ${type}, Topic: ${topic}, Session: ${session}
-      Structure: Cover, Index, Ack, Content, Conclusion.
-    `;
+    const prompt = `Create Project: ${type} for Class ${classLevel} ${subject}, Topic: ${topic}, Session: ${session}. Structure: Cover, Index, Content, Conclusion.`;
 
-    const response = await generateWithRetry(async (client) => {
+    const response = await generateWithRetry(async (client, model) => {
       return await client.models.generateContent({
-        model: 'gemini-3-flash-preview', 
+        model: model,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          maxOutputTokens: 8192, // High limit for projects
+          maxOutputTokens: 8192,
         },
       });
     });
@@ -190,7 +209,7 @@ export const getProjectContent = async (
     return text;
   } catch (error) {
     console.error("Project Error", error);
-    return "Project generation failed. Please try again.";
+    return "Project generation failed due to high load. Please try again.";
   }
 };
 
@@ -200,18 +219,15 @@ export const getSamplePaper = async (
 ): Promise<string> => {
   try {
     const session = getCurrentSession();
-    const prompt = `
-      Create Sample Paper (80 Marks). Class ${classLevel} ${subject}. Session ${session}.
-      Include Sections A-E. Add Answers at the end after "---".
-    `;
+    const prompt = `Create CBSE Sample Paper (80 Marks) for Class ${classLevel} ${subject}, Session ${session}. Sections A-E. Answers at end.`;
 
-    const response = await generateWithRetry(async (client) => {
+    const response = await generateWithRetry(async (client, model) => {
       return await client.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: model,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          maxOutputTokens: 8192, // High limit for papers
+          maxOutputTokens: 8192,
         },
       });
     });
@@ -221,6 +237,6 @@ export const getSamplePaper = async (
     return text;
   } catch (error) {
     console.error("Paper Error", error);
-    return "Sample paper generation failed. Please try again.";
+    return "Paper generation failed due to high load. Please try again.";
   }
 };
