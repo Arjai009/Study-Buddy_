@@ -57,6 +57,37 @@ const ProjectHelper: React.FC<ProjectHelperProps> = ({ classLevel, onBookmark })
       document.body.removeChild(fileDownload);
   };
 
+  const handlePrintPDF = () => {
+    if (!result) return;
+    const printWindow = window.open('', '', 'width=800,height=600');
+    if (!printWindow) return;
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${subject} Project</title>
+          <style>
+            body { font-family: 'Times New Roman', serif; padding: 40px; line-height: 1.6; color: #000; }
+            h1 { text-align: center; margin-bottom: 20px; text-transform: uppercase; }
+            pre { white-space: pre-wrap; font-family: inherit; font-size: 14px; }
+            .header { text-align: center; border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 30px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${subject} - ${type}</h1>
+            <p>Topic: ${topic} | Class: ${classLevel}</p>
+          </div>
+          <pre>${result}</pre>
+          <script>
+            window.onload = function() { window.print(); window.close(); }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const handleSave = () => {
       if(result) {
           onBookmark({
@@ -147,6 +178,7 @@ const ProjectHelper: React.FC<ProjectHelperProps> = ({ classLevel, onBookmark })
                   <>
                      <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                         <button onClick={handleSave} className="shrink-0 bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-none"><BookmarkIcon className="w-3 h-3"/> Save</button>
+                        <button onClick={handlePrintPDF} className="shrink-0 bg-rose-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-rose-600 shadow-lg shadow-rose-200 dark:shadow-none"><Printer className="w-3 h-3"/> PDF</button>
                         <button onClick={handleExportDoc} className="shrink-0 bg-white dark:bg-gray-800 text-gray-700 dark:text-white border border-gray-200 dark:border-gray-700 px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-gray-50"><Download className="w-3 h-3"/> Word</button>
                         <button onClick={reset} className="shrink-0 text-gray-400 px-4 py-2.5 text-xs font-bold hover:text-gray-600 flex items-center gap-1"><RefreshCcw className="w-3 h-3"/> New</button>
                      </div>

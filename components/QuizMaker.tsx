@@ -70,6 +70,35 @@ const QuizMaker: React.FC<QuizMakerProps> = ({ classLevel, onQuizComplete, histo
       document.body.removeChild(fileDownload);
   };
 
+  const handlePrintPDF = () => {
+    if (!paperContent) return;
+    const printWindow = window.open('', '', 'width=800,height=600');
+    if (!printWindow) return;
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${subject} Sample Paper</title>
+          <style>
+            body { font-family: 'Times New Roman', serif; padding: 40px; line-height: 1.6; color: #000; }
+            h1 { text-align: center; margin-bottom: 10px; text-transform: uppercase; }
+            .meta { text-align: center; margin-bottom: 30px; font-weight: bold; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            pre { white-space: pre-wrap; font-family: inherit; font-size: 14px; }
+          </style>
+        </head>
+        <body>
+          <h1>Study Buddy Sample Paper</h1>
+          <div class="meta">Subject: ${subject} | Class: ${classLevel}</div>
+          <pre>${paperContent}</pre>
+          <script>
+            window.onload = function() { window.print(); window.close(); }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const handleSavePaper = () => {
       if(paperContent) {
           onBookmark({
@@ -125,11 +154,14 @@ const QuizMaker: React.FC<QuizMakerProps> = ({ classLevel, onQuizComplete, histo
                       <pre className="whitespace-pre-wrap">{paperContent}</pre>
                   </div>
                   
-                  <div className="flex gap-3 justify-center">
-                      <button onClick={handleSavePaper} className="px-5 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95">
+                  <div className="flex gap-3 justify-center overflow-x-auto no-scrollbar py-2">
+                      <button onClick={handleSavePaper} className="px-5 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 shrink-0">
                           <BookmarkIcon className="w-4 h-4" /> Save
                       </button>
-                      <button onClick={handleExportDoc} className="px-5 py-3 bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-gray-50 transition-all active:scale-95">
+                      <button onClick={handlePrintPDF} className="px-5 py-3 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 shrink-0">
+                          <Printer className="w-4 h-4" /> PDF
+                      </button>
+                      <button onClick={handleExportDoc} className="px-5 py-3 bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-gray-50 transition-all active:scale-95 shrink-0">
                           <Download className="w-4 h-4" /> Word
                       </button>
                   </div>
@@ -145,7 +177,7 @@ const QuizMaker: React.FC<QuizMakerProps> = ({ classLevel, onQuizComplete, histo
              <button onClick={() => setView('setup')} className="p-2 bg-gray-100 dark:bg-gray-800 rounded-full hover:bg-gray-200"><ArrowLeft className="w-5 h-5 dark:text-white"/></button>
              <h2 className="text-2xl font-black text-gray-900 dark:text-white">History</h2>
          </div>
-         <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
+         <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28 custom-scrollbar">
            {history.length === 0 ? (
              <div className="text-center py-20 flex flex-col items-center opacity-50">
                 <History className="w-12 h-12 mb-4 text-gray-400"/>
@@ -254,7 +286,7 @@ const QuizMaker: React.FC<QuizMakerProps> = ({ classLevel, onQuizComplete, histo
          </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-center pb-28">
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-center pb-28 custom-scrollbar">
           <div className="bg-white dark:bg-gray-900 p-6 rounded-[2rem] shadow-sm border border-gray-100 dark:border-gray-800">
             {/* Mode Switcher */}
             <div className="flex p-1.5 bg-gray-100 dark:bg-gray-800 rounded-2xl mb-8">

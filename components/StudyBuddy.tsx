@@ -67,13 +67,13 @@ const StudyBuddy: React.FC<StudyBuddyProps> = ({ classLevel, onBookmark }) => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-950 relative overflow-hidden">
-      {/* 1. Modern Header */}
-      <div className="bg-white dark:bg-gray-900 px-6 py-4 shadow-sm border-b border-gray-100 dark:border-gray-800 flex justify-between items-center z-20 sticky top-0">
+    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-950 overflow-hidden">
+      {/* 1. Header - Sticky Top */}
+      <div className="bg-white dark:bg-gray-900 px-6 py-4 shadow-sm border-b border-gray-100 dark:border-gray-800 flex justify-between items-center z-20 shrink-0">
           <div>
             <h1 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2 tracking-tight">
                 Ask AI
-                <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">v2.0</span>
+                <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">v2.1</span>
             </h1>
             <p className="text-gray-500 text-xs font-semibold">Class {classLevel} Assistant</p>
           </div>
@@ -102,12 +102,12 @@ const StudyBuddy: React.FC<StudyBuddyProps> = ({ classLevel, onBookmark }) => {
           </div>
       </div>
 
-      {/* 2. Chat Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-6 pb-28">
+      {/* 2. Chat Area - Independent Scroll */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-6 relative">
         
         {/* Empty State */}
         {!answer && !loading && !lastQuestion && (
-            <div className="flex flex-col items-center justify-center h-full opacity-100 mt-10 space-y-4">
+            <div className="flex flex-col items-center justify-center h-full opacity-100 space-y-4">
                 <div className="w-20 h-20 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200 dark:shadow-none animate-fade-in-up">
                     <Sparkles className="w-10 h-10 text-white" />
                 </div>
@@ -129,7 +129,7 @@ const StudyBuddy: React.FC<StudyBuddyProps> = ({ classLevel, onBookmark }) => {
 
         {/* AI Answer */}
         {(loading || answer) && (
-            <div className="flex justify-start animate-fade-in-up w-full">
+            <div className="flex justify-start animate-fade-in-up w-full pb-4">
                 <div className="flex gap-3 max-w-full items-start">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-sm mt-1">
                         <Sparkles className="w-4 h-4 text-white" />
@@ -167,10 +167,10 @@ const StudyBuddy: React.FC<StudyBuddyProps> = ({ classLevel, onBookmark }) => {
         )}
       </div>
 
-      {/* 3. Floating Input Area */}
-      <div className="absolute bottom-[4.5rem] left-4 right-4 z-30">
-        <form onSubmit={handleAsk} className="relative shadow-2xl rounded-[2rem]">
-            <div className="bg-white dark:bg-gray-800 rounded-[2rem] border border-gray-200 dark:border-gray-700 flex items-center p-2 pl-4 transition-all focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500">
+      {/* 3. Footer Input - Fixed */}
+      <div className="shrink-0 z-30 p-4 pb-24 bg-gradient-to-t from-gray-50 via-gray-50 to-transparent dark:from-gray-950 dark:via-gray-950">
+        <form onSubmit={handleAsk} className="relative">
+            <div className="bg-white dark:bg-gray-800 rounded-[2rem] border border-gray-200 dark:border-gray-700 flex items-center p-2 pl-4 transition-all focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 shadow-xl">
                 <textarea
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}

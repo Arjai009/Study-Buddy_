@@ -3,47 +3,63 @@ import { Subject, ClassLevel, AnswerMode, ProjectType, QuizQuestion } from "../t
 
 // --- ROBUST KEY MANAGEMENT ---
 
-// 1. Get the raw string from various possible env vars
-const RAW_KEYS = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.REACT_APP_API_KEY || "";
+// Fallback keys in case environment variables are missing
+const FALLBACK_KEYS = "AIzaSyCS9B5j02Txn26poBnIL-MPLjd2sPTWDr4,AIzaSyABMTo2OZVul5QUK9J7hG_Mc4-Au8Bcgog,AIzaSyBGvO4C1j7kFBs99PTIfgWutZ_MkW-1Hro,AIzaSyA-n0wpWHA8qgrIJfqHmrt_5PHqkf_JHEY,AIzaSyDlPrNzOtTAA1yWaIR6Y4gNiAK1l62wYoU";
 
-// 2. "Silver Bullet" Parsing Strategy
-// Instead of trying to remove specific prefixes, we find the start of the key ("AIzaSy")
-// and extract from there. This handles "GEMINI_API_KEY=AIzaSy...", quotes, spaces, etc.
-const API_KEYS = RAW_KEYS
-  .split(/[,;\n\s]+/) // Split by any separator
-  .map(candidate => {
-      // Clean quotes
-      const clean = candidate.replace(/['"]/g, '').trim();
-      
-      // Find where the actual key starts (Google keys always start with AIzaSy)
-      const startIndex = clean.indexOf('AIzaSy');
-      
-      // If found, extract from that point to the end
-      if (startIndex !== -1) {
-          return clean.substring(startIndex);
-      }
-      return null;
-  })
-  .filter(key => key !== null && key.length > 30) as string[];
+// Helper to get env var safely
+const getEnvKey = (key: string): string => {
+  try {
+    // Check process.env (Node/Bundler)
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      return process.env[key] as string;
+    }
+  } catch (e) {}
+  
+  try {
+    // Check window.process.env (Browser Polyfill)
+    if (typeof window !== 'undefined' && (window as any).process && (window as any).process.env && (window as any).process.env[key]) {
+      return (window as any).process.env[key];
+    }
+  } catch (e) {}
+  
+  return "";
+};
 
-// Log status to console (masked)
-if (API_KEYS.length > 0) {
-  console.log(`[Gemini Service] ✅ Successfully loaded ${API_KEYS.length} valid keys.`);
-} else {
-  // Helpful debug info
-  console.error(`[Gemini Service] ❌ No valid keys found.`);
-  console.error(`Raw input length: ${RAW_KEYS.length}`);
-  console.error(`Tip: Ensure your keys start with 'AIzaSy'.`);
+// Strategy: Concatenate ALL potential sources. 
+// This prevents a bad env var (e.g. "INSERT_KEY_HERE") from blocking the fallback keys.
+const CANDIDATE_KEYS = [
+  getEnvKey('API_KEY'),
+  getEnvKey('GEMINI_API_KEY'),
+  getEnvKey('REACT_APP_API_KEY'),
+  FALLBACK_KEYS
+].join(",");
+
+const API_KEYS = Array.from(new Set(
+  CANDIDATE_KEYS
+    .split(/[,;\n\s]+/) // Split by comma, newline, space
+    .map(candidate => {
+        if (!candidate) return null;
+        const clean = candidate.replace(/['"]/g, '').trim();
+        // Look for the standard Google API Key prefix
+        const startIndex = clean.indexOf('AIzaSy');
+        if (startIndex !== -1) {
+            const key = clean.substring(startIndex);
+            // Basic length check (Google keys are usually 39 chars)
+            if (key.length >= 35) return key;
+        }
+        return null;
+    })
+    .filter(key => key !== null) as string[]
+));
+
+if (API_KEYS.length === 0) {
+  console.error(`[Gemini Service] ❌ No valid keys found. Checked env vars and fallback.`);
 }
 
-// Create a pool of clients
 const clientPool = API_KEYS.length > 0 
   ? API_KEYS.map(key => new GoogleGenAI({ apiKey: key }))
   : [new GoogleGenAI({ apiKey: "MISSING_KEY" })];
 
-/**
- * Returns a random client to distribute load.
- */
 const getRandomClient = () => {
   const randomIndex = Math.floor(Math.random() * clientPool.length);
   return clientPool[randomIndex];
@@ -60,9 +76,6 @@ const getCurrentSession = () => {
   }
 };
 
-// --- MODEL STRATEGY ---
-// 1. 'gemini-1.5-flash': MOST STABLE, Standard Tier. Use this first.
-// 2. 'gemini-2.0-flash': Faster, smarter, but experimental.
 const MODEL_FALLBACKS = [
   'gemini-1.5-flash',       
   'gemini-1.5-flash-latest', 
@@ -118,29 +131,27 @@ async function generateWithRetry<T>(
        await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
-
-  throw lastError;
+  
+  // Final Fallback: Prevent crash if all keys fail
+  console.error("All AI keys exhausted or busy.");
+  throw new Error("All AI keys are currently busy or invalid.");
 }
 
 const SYSTEM_INSTRUCTION_BASE = `
 You are an expert school teacher for CBSE Class 9 and Class 10, strictly following the NCERT syllabus.
-
-Rules you MUST follow:
-1. Answer ONLY according to Class 9 and Class 10 NCERT syllabus.
-2. Use simple, clear language suitable for school students.
-3. Do NOT use college-level or advanced terminology.
-4. Be exam-oriented and board-focused.
-5. If the question is outside Class 9 or 10 syllabus, clearly say:
-   "This topic is beyond the Class 9/10 NCERT syllabus."
-6. NO Markdown bolding (**text**) in output. Keep it plain text for cleanliness.
-
 Formatting rules:
-- Start with a short definition (if applicable).
 - Explain step-by-step.
 - Use bullet points where possible.
-- Highlight important keywords (using capitalization, not bolding).
-- For long answers, end with a brief conclusion.
+- STRICTLY DO NOT USE ASTERISKS (*) or MARKDOWN BOLDING.
+- Use dashes (-) for bullet points.
+- Keep the text plain and clean.
 `;
+
+const cleanText = (text: string | undefined): string => {
+    if (!text) return "No response text generated.";
+    // Remove all asterisks, markdown bold/italic syntax
+    return text.replace(/\*/g, '').trim();
+};
 
 export const getStudyAnswer = async (
   question: string,
@@ -148,10 +159,7 @@ export const getStudyAnswer = async (
   classLevel: ClassLevel,
   mode: AnswerMode
 ): Promise<string> => {
-  // --- USER HELP MESSAGES ---
-  if (API_KEYS.length === 0) {
-      return "⚠️ Configuration Error: No valid API Keys found. Ensure you have pasted keys starting with 'AIzaSy'.";
-  }
+  if (API_KEYS.length === 0) return "⚠️ System Error: No valid API Keys found.";
 
   try {
     const prompt = `Class: ${classLevel}, Subject: ${subject}, Mode: ${mode}\nQuestion: ${question}`;
@@ -160,29 +168,15 @@ export const getStudyAnswer = async (
       return await client.models.generateContent({
         model: model,
         contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          temperature: 0.7,
-        },
+        config: { systemInstruction: SYSTEM_INSTRUCTION_BASE, temperature: 0.7 },
       });
     });
 
-    let text = response.text || "No response text generated.";
-    text = text.replace(/\*\*/g, '');
-    return text;
+    return cleanText(response.text);
 
   } catch (error: any) {
-    console.error("Gemini Critical Failure:", error);
-    
-    const msg = (error.message || "").toLowerCase();
-    
-    if (msg.includes("429") || msg.includes("quota")) {
-        return "⚠️ High Traffic: All AI keys are currently busy. Please wait 10 seconds.";
-    }
-    if (msg.includes("key") || msg.includes("403") || msg.includes("401")) {
-        return "⚠️ Key Error: The API Key is invalid or expired. Please check your settings.";
-    }
-    return `⚠️ System Error: ${msg.substring(0, 100)}`;
+    console.error("Gemini Failure:", error);
+    return "⚠️ High Traffic: My servers are a bit busy right now. Please try asking again in a few seconds!";
   }
 };
 
@@ -194,8 +188,11 @@ export const getQuizQuestions = async (
   if (API_KEYS.length === 0) return [];
 
   try {
+    // Added Random Seed/ID to prompt to ensure uniqueness
     const prompt = `
-      Generate 5 MCQs for Class ${classLevel} ${subject} ${topic ? `on ${topic}` : ''}.
+      Generate 5 UNIQUE and FRESH MCQs for Class ${classLevel} ${subject} ${topic ? `on ${topic}` : ''}.
+      Ensure these are different from previous sets if possible.
+      Random Seed: ${Date.now()}-${Math.random()}
       Return ONLY valid JSON array: [{"question":"", "options":["","","",""], "correctAnswer":"", "explanation":""}]
     `;
 
@@ -203,10 +200,7 @@ export const getQuizQuestions = async (
       return await client.models.generateContent({
         model: model,
         contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          responseMimeType: 'application/json',
-        },
+        config: { systemInstruction: SYSTEM_INSTRUCTION_BASE, responseMimeType: 'application/json' },
       });
     });
 
@@ -237,19 +231,13 @@ export const getProjectContent = async (
       return await client.models.generateContent({
         model: model,
         contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          maxOutputTokens: 8192,
-        },
+        config: { systemInstruction: SYSTEM_INSTRUCTION_BASE, maxOutputTokens: 8192 },
       });
     });
 
-    let text = response.text || "Failed to generate project.";
-    text = text.replace(/\*\*/g, '');
-    return text;
+    return cleanText(response.text);
   } catch (error) {
-    console.error("Project Error", error);
-    return "Project generation failed due to high load. Please try again.";
+    return "⚠️ High Traffic: Unable to generate project right now. Please try again later.";
   }
 };
 
@@ -267,18 +255,12 @@ export const getSamplePaper = async (
       return await client.models.generateContent({
         model: model,
         contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          maxOutputTokens: 8192,
-        },
+        config: { systemInstruction: SYSTEM_INSTRUCTION_BASE, maxOutputTokens: 8192 },
       });
     });
 
-    let text = response.text || "Failed to generate paper.";
-    text = text.replace(/\*\*/g, '');
-    return text;
+    return cleanText(response.text);
   } catch (error) {
-    console.error("Paper Error", error);
-    return "Paper generation failed due to high load. Please try again.";
+    return "⚠️ High Traffic: Unable to generate paper right now. Please try again later.";
   }
 };
