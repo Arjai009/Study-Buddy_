@@ -1,30 +1,32 @@
 import { GoogleGenAI } from "@google/genai";
 import { Subject, ClassLevel, AnswerMode, ProjectType, QuizQuestion } from "../types";
 
-// --- KEY ROTATION LOGIC ---
-// Parse multiple keys from the environment variable (comma separated)
-// Example Env Var: API_KEY="key1,key2,key3"
-const API_KEYS = (process.env.API_KEY || "").split(',').map(k => k.trim()).filter(k => k.length > 0);
+// --- MULTI-KEY ARCHITECTURE ---
+// 1. Parse the comma-separated keys from the environment
+const RAW_KEYS = process.env.API_KEY || "";
+const API_KEYS = RAW_KEYS.split(',').map(k => k.trim()).filter(k => k.length > 0);
 
-// Create a pool of clients
-const clients = API_KEYS.length > 0 
+// 2. Initialize a pool of clients
+// If no keys are found, create a dummy one to prevent crash (requests will fail gracefully)
+const clientPool = API_KEYS.length > 0 
   ? API_KEYS.map(key => new GoogleGenAI({ apiKey: key }))
-  : [new GoogleGenAI({ apiKey: "" })]; // Fallback
+  : [new GoogleGenAI({ apiKey: "" })];
 
 /**
- * Gets a random client from the pool.
- * This effectively load balances requests across multiple free tier accounts.
+ * Returns a random client from the pool.
+ * With 5 keys, this distributes the load (~20% per key).
  */
-const getClient = () => {
-  const randomIndex = Math.floor(Math.random() * clients.length);
-  return clients[randomIndex];
+const getRandomClient = () => {
+  const randomIndex = Math.floor(Math.random() * clientPool.length);
+  return clientPool[randomIndex];
 };
 
 const getCurrentSession = () => {
   const now = new Date();
   const year = now.getFullYear();
-  const month = now.getMonth(); // 0-11 (Jan is 0, April is 3)
+  const month = now.getMonth(); // 0-11
   
+  // Indian Academic Session Logic (starts April)
   if (month >= 3) {
     return `${year}-${(year + 1).toString().slice(-2)}`;
   } else {
@@ -33,50 +35,59 @@ const getCurrentSession = () => {
 };
 
 /**
- * SMART RETRY LOGIC
- * Handles 429 (Rate Limit) errors by waiting or switching keys implicitly via retries.
+ * ROBUST RETRY SYSTEM
+ * If a key hits a Rate Limit (429) or Server Overload (503),
+ * this function waits briefly and then retries using a *different* random client.
  */
 async function generateWithRetry<T>(
   operation: (client: GoogleGenAI) => Promise<T>, 
   retries = 3, 
-  baseDelay = 2000
+  baseDelay = 1000
 ): Promise<T> {
   try {
-    // Pick a client for this attempt
-    const client = getClient();
+    // 1. Pick a key for this attempt
+    const client = getRandomClient();
     return await operation(client);
   } catch (error: any) {
+    // 2. Detect Exhaustion/Busy errors
     const isRateLimit = error.status === 429 || 
+                        error.status === 503 ||
                         (error.message && error.message.includes('429')) ||
-                        (error.message && error.message.includes('exhausted'));
+                        (error.message && error.message.includes('exhausted')) ||
+                        (error.message && error.message.includes('overloaded'));
     
+    // 3. Failover Logic
     if (retries > 0 && isRateLimit) {
-      console.warn(`Rate limit hit on one key. Retrying with potential key switch... (${retries} left)`);
-      // Wait for the delay
+      console.warn(`Key busy/exhausted. Switching keys... (${retries} retries left)`);
+      
+      // Wait a short delay before trying another key
       await new Promise(resolve => setTimeout(resolve, baseDelay));
-      // Retry (getClient will likely pick a different key next time)
+      
+      // Recursive call: This naturally picks a new random client from the pool
       return generateWithRetry(operation, retries - 1, baseDelay * 1.5);
     }
+    
+    // If not a rate limit, or out of retries, throw the error
     throw error;
   }
 }
 
+// Optimized System Instruction for speed and cost efficiency
 const SYSTEM_INSTRUCTION_BASE = `
 You are an expert school teacher for CBSE Classes 9, 10, 11, and 12, strictly following the NCERT syllabus. 
 
 Rules you MUST follow:
-1. Answer ONLY according to the NCERT syllabus for the specified Class.
-2. For Class 9/10: Use simple language, build strong foundations.
-3. For Class 11/12: Use precise terminology and board-level explanations.
-4. Be exam-oriented and board-focused.
-5. If the question is outside the syllabus, clearly say: "This topic is beyond the Class [X] NCERT syllabus."
-6. Do NOT use markdown bolding (asterisks like **text**) to keep output clean and readable.
-7. Be concise and token-efficient while maintaining clarity.
+1. Answer ONLY according to the NCERT syllabus.
+2. For Class 9/10: Simple language, foundation focus.
+3. For Class 11/12: Precise terminology, board-exam focus.
+4. If outside syllabus: "This topic is beyond the Class [X] NCERT syllabus."
+5. NO Markdown bolding (**text**) in output. Keep it plain text.
+6. Be concise.
 
-Formatting rules:
-- Start with a short definition.
-- Explain step-by-step.
-- Use bullet points.
+Format:
+- Definition
+- Step-by-step explanation
+- Conclusion
 `;
 
 export const getStudyAnswer = async (
@@ -91,11 +102,8 @@ export const getStudyAnswer = async (
       Subject: ${subject}
       Mode: ${mode}
       Question: ${question}
-
-      Instructions:
-      - Very Simple: Simplest explanation.
-      - Exam Ready: Board Exam format (5 marks).
-      - One-Line: Precise 1-2 lines.
+      
+      Provide a clean, structured answer.
     `;
 
     const response = await generateWithRetry(async (client) => {
@@ -109,12 +117,12 @@ export const getStudyAnswer = async (
       });
     });
 
-    let text = response.text || "Sorry, I couldn't generate an answer. Please try again.";
-    text = text.replace(/\*\*/g, ''); 
+    let text = response.text || "Sorry, I couldn't generate an answer.";
+    text = text.replace(/\*\*/g, ''); // Remove bolding
     return text;
   } catch (error) {
-    console.error("Gemini API Error:", error);
-    return "All AI servers are currently busy. Please wait a moment and try again.";
+    console.error("AI Error:", error);
+    return "All AI systems are currently at maximum capacity. Please wait 1 minute and try again.";
   }
 };
 
@@ -125,18 +133,9 @@ export const getQuizQuestions = async (
 ): Promise<QuizQuestion[]> => {
   try {
     const prompt = `
-      Generate 5 MCQ for Class ${classLevel} ${subject}.
-      ${topic ? `Topic: ${topic}` : 'Topic: General NCERT'}
-      
-      Output strictly JSON array:
-      [
-        {
-          "question": "Text",
-          "options": ["A", "B", "C", "D"],
-          "correctAnswer": "A", 
-          "explanation": "Brief reason"
-        }
-      ]
+      Generate 5 MCQs. Class ${classLevel} ${subject}. ${topic ? 'Topic: ' + topic : ''}
+      Return ONLY a JSON array:
+      [{"question": "...", "options": ["A", "B", "C", "D"], "correctAnswer": "A", "explanation": "..."}]
     `;
 
     const response = await generateWithRetry(async (client) => {
@@ -156,7 +155,7 @@ export const getQuizQuestions = async (
     }
     return [];
   } catch (error) {
-    console.error("Quiz Gen Error", error);
+    console.error("Quiz Error", error);
     return [];
   }
 };
@@ -170,17 +169,9 @@ export const getProjectContent = async (
   try {
     const session = getCurrentSession();
     const prompt = `
-      Create school project content.
+      Create Project Content.
       Class: ${classLevel}, Subject: ${subject}, Type: ${type}, Topic: ${topic}, Session: ${session}
-
-      Structure:
-      1. Cover Page Details
-      2. Index
-      3. Acknowledgement & Certificate
-      4. Main Content (Detailed)
-      5. Conclusion
-
-      If invalid subject/type combo, state it.
+      Structure: Cover, Index, Ack, Content, Conclusion.
     `;
 
     const response = await generateWithRetry(async (client) => {
@@ -188,18 +179,18 @@ export const getProjectContent = async (
         model: 'gemini-3-flash-preview', 
         contents: prompt,
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION_BASE + " Provide detailed, well-structured, ready-to-print output.",
-          maxOutputTokens: 8192, 
+          systemInstruction: SYSTEM_INSTRUCTION_BASE,
+          maxOutputTokens: 8192, // High limit for projects
         },
       });
     });
 
-    let text = response.text || "Could not generate project content.";
+    let text = response.text || "Failed to generate project.";
     text = text.replace(/\*\*/g, '');
     return text;
   } catch (error) {
-    console.error("Project Gen Error", error);
-    return "Server is busy. Please try again in a few moments.";
+    console.error("Project Error", error);
+    return "Project generation failed. Please try again.";
   }
 };
 
@@ -210,17 +201,8 @@ export const getSamplePaper = async (
   try {
     const session = getCurrentSession();
     const prompt = `
-      Create CBSE Sample Paper. Class ${classLevel} ${subject}. 80 Marks. Session ${session}.
-      
-      Sections:
-      A: 5 MCQs (1 mark)
-      B: 3 Short Qs (2 marks)
-      C: 3 Short Qs (3 marks)
-      D: 3 Long Qs (5 marks)
-      E: 1 Case Study (4 marks)
-      
-      INCLUDE ANSWERS at the end.
-      Use "---" separator between Paper and Answers.
+      Create Sample Paper (80 Marks). Class ${classLevel} ${subject}. Session ${session}.
+      Include Sections A-E. Add Answers at the end after "---".
     `;
 
     const response = await generateWithRetry(async (client) => {
@@ -229,16 +211,16 @@ export const getSamplePaper = async (
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION_BASE,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 8192, // High limit for papers
         },
       });
     });
 
-    let text = response.text || "Could not generate sample paper.";
+    let text = response.text || "Failed to generate paper.";
     text = text.replace(/\*\*/g, '');
     return text;
   } catch (error) {
-    console.error("Sample Paper Error", error);
-    return "Server is busy. Please try again in a few moments.";
+    console.error("Paper Error", error);
+    return "Sample paper generation failed. Please try again.";
   }
 };
